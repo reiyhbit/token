@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Mobile M3U Player</title>
+    <!-- Shaka Player CSS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.3.9/controls.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #fff;
+            min-height: 100vh;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        .container {
+            width: 100%;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 25px;
+            padding-top: 10px;
+        }
+        
+        h1 {
+            font-size: 1.8rem;
+            margin-bottom: 5px;
+            color: #fff;
+        }
+        
+        .subtitle {
+            color: #a0a0c0;
+            font-size: 0.9rem;
+        }
+        
+        .player-container {
+            background-color: #0f3460;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+            margin-bottom: 25px;
+        }
+        
+        #video-container {
+            width: 100%;
+            height: 0;
+            padding-bottom: 56.25%; /* 16:9 aspect ratio */
+            position: relative;
+            background-color: #000;
+        }
+        
+        #video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        
+        .controls {
+            padding: 20px;
+            background-color: rgba(15, 52, 96, 0.9);
+        }
+        
+        .control-group {
+            margin-bottom: 20px;
+        }
+        
+        .control-group:last-child {
+            margin-bottom: 0;
+        }
+        
+        .control-label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #e6e6ff;
+        }
+        
+        .url-display {
+            background-color: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            padding: 12px 15px;
+            font-size: 0.85rem;
+            word-break: break-all;
+            margin-bottom: 15px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .btn {
+            background: linear-gradient(to right, #4a6fa5, #3a5985);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 14px 20px;
+            font-size: 1rem;
+            font-weight: 600;
+            width: 100%;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+        
+        .btn:hover, .btn:active {
+            background: linear-gradient(to right, #5a7fb5, #4a6995);
+            transform: translateY(-2px);
+        }
+        
+        .btn:active {
+            transform: translateY(0);
+        }
+        
+        .btn i {
+            font-size: 1.2rem;
+        }
+        
+        .status {
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 15px;
+            text-align: center;
+            font-weight: 500;
+            display: none;
+        }
+        
+        .status.success {
+            background-color: rgba(46, 204, 113, 0.2);
+            border: 1px solid rgba(46, 204, 113, 0.5);
+            color: #2ecc71;
+            display: block;
+        }
+        
+        .status.error {
+            background-color: rgba(231, 76, 60, 0.2);
+            border: 1px solid rgba(231, 76, 60, 0.5);
+            color: #e74c3c;
+            display: block;
+        }
+        
+        .status.info {
+            background-color: rgba(52, 152, 219, 0.2);
+            border: 1px solid rgba(52, 152, 219, 0.5);
+            color: #3498db;
+            display: block;
+        }
+        
+        .instructions {
+            background-color: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 20px;
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+        
+        .instructions h3 {
+            margin-bottom: 10px;
+            color: #e6e6ff;
+        }
+        
+        .instructions ul {
+            padding-left: 20px;
+            margin-bottom: 15px;
+        }
+        
+        .instructions li {
+            margin-bottom: 8px;
+        }
+        
+        .instructions code {
+            background-color: rgba(0, 0, 0, 0.3);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        
+        footer {
+            margin-top: 25px;
+            text-align: center;
+            font-size: 0.8rem;
+            color: #888;
+            padding-bottom: 20px;
+        }
+        
+        .shaka-logo {
+            color: #fff;
+            font-weight: bold;
+            text-decoration: none;
+        }
+        
+        /* Mobile optimizations */
+        @media (max-width: 768px) {
+            body {
+                padding: 15px;
+            }
+            
+            h1 {
+                font-size: 1.5rem;
+            }
+            
+            .controls {
+                padding: 15px;
+            }
+            
+            .btn {
+                padding: 16px 20px;
+            }
+        }
+        
+        /* Landscape mode optimization */
+        @media (max-width: 768px) and (orientation: landscape) {
+            #video-container {
+                padding-bottom: 45%;
+            }
+            
+            .container {
+                max-width: 100%;
+            }
+        }
+        
+        /* Loading animation */
+        .loader {
+            display: none;
+            width: 40px;
+            height: 40px;
+            margin: 20px auto;
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: #4a6fa5;
+            animation: spin 1s ease-in-out infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Mobile M3U Player</h1>
+            <p class="subtitle">Stream your M3U playlist with Shaka Player</p>
+        </header>
+        
+        <div class="player-container">
+            <div id="video-container">
+                <video id="video" autoplay controls playsinline></video>
+            </div>
+            
+            <div class="controls">
+                <div class="control-group">
+                    <div class="control-label">M3U Playlist URL</div>
+                    <div class="url-display" id="url-display">https://converse.nathcreqtives.com/playlist.m3u?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJyZWl5aDEwMjY5NCIsImV4cCI6MTc2NTg1Njc0MH0.6hmppZKNycvU17S2latBLhBPM2wpyHgksWrWRtQp9bM</div>
+                </div>
+                
+                <div class="control-group">
+                    <button id="load-btn" class="btn">
+                        <i>▶</i> Load & Play Stream
+                    </button>
+                </div>
+                
+                <div class="loader" id="loader"></div>
+                
+                <div id="status" class="status"></div>
+            </div>
+        </div>
+        
+        <div class="instructions">
+            <h3>How to Use This Player</h3>
+            <ul>
+                <li>Click the "Load & Play Stream" button to start playback</li>
+                <li>Use the video controls to play, pause, or adjust volume</li>
+                <li>For best performance, ensure you have a stable internet connection</li>
+                <li>If playback fails, the playlist URL may be invalid or expired</li>
+            </ul>
+            <p>This player uses <a href="https://shaka-player-demo.appspot.com/docs/api/tutorial-welcome.html" target="_blank" class="shaka-logo">Shaka Player</a> - an open-source JavaScript library for adaptive media.</p>
+        </div>
+        
+        <footer>
+            <p>Mobile M3U Player &copy; 2023 | Powered by Shaka Player</p>
+        </footer>
+    </div>
+
+    <!-- Shaka Player library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.3.9/shaka-player.ui.min.js"></script>
+    
+    <script>
+        // Initialize Shaka Player
+        document.addEventListener('DOMContentLoaded', function() {
+            // Display the M3U URL (truncated for mobile display)
+            const fullUrl = "https://converse.nathcreqtives.com/playlist.m3u?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJyZWl5aDEwMjY5NCIsImV4cCI6MTc2NTg1Njc0MH0.6hmppZKNycvU17S2latBLhBPM2wpyHgksWrWRtQp9bM";
+            const urlDisplay = document.getElementById('url-display');
+            
+            // Truncate URL for display on mobile
+            if (window.innerWidth < 768) {
+                const urlStart = fullUrl.substring(0, 40);
+                const urlEnd = fullUrl.substring(fullUrl.length - 20);
+                urlDisplay.textContent = urlStart + "..." + urlEnd;
+            } else {
+                urlDisplay.textContent = fullUrl;
+            }
+            
+            // Check if browser supports Shaka Player
+            if (!shaka.Player.isBrowserSupported()) {
+                showStatus('Your browser does not support Shaka Player. Please try a modern browser like Chrome, Firefox, or Edge.', 'error');
+                document.getElementById('load-btn').disabled = true;
+                return;
+            }
+            
+            // Initialize Shaka Player
+            const video = document.getElementById('video');
+            const player = new shaka.Player(video);
+            
+            // Optional: Configure player
+            player.configure({
+                streaming: {
+                    bufferingGoal: 30,
+                    rebufferingGoal: 2,
+                    bufferBehind: 30
+                }
+            });
+            
+            // Set up UI (optional)
+            const ui = new shaka.ui.Overlay(player, video, video.parentElement);
+            ui.configure({
+                controlPanelElements: ['play_pause', 'mute', 'volume', 'time_and_duration', 
+                                      'fullscreen', 'overflow_menu'],
+                overflowMenuButtons: ['quality', 'playback_rate', 'picture_in_picture']
+            });
+            
+            // Load button event listener
+            document.getElementById('load-btn').addEventListener('click', async function() {
+                await loadStream(player, fullUrl);
+            });
+            
+            // Show initial status
+            showStatus('Ready to load M3U playlist. Click the button above to start playback.', 'info');
+        });
+        
+        // Function to load the M3U stream
+        async function loadStream(player, url) {
+            const loadBtn = document.getElementById('load-btn');
+            const loader = document.getElementById('loader');
+            const status = document.getElementById('status');
+            
+            // Show loading state
+            loadBtn.disabled = true;
+            loadBtn.innerHTML = '<i>⏳</i> Loading Stream...';
+            loader.style.display = 'block';
+            status.className = 'status info';
+            status.textContent = 'Loading stream, please wait...';
+            status.style.display = 'block';
+            
+            try {
+                // Try to load the manifest
+                await player.load(url);
+                
+                // Success
+                showStatus('Stream loaded successfully! Playback started.', 'success');
+                console.log('M3U playlist loaded successfully');
+                
+                // Auto-play the video (muted for browser autoplay policies)
+                const video = document.getElementById('video');
+                video.muted = true;
+                const playPromise = video.play();
+                
+                if (playPromise !== undefined) {
+                    playPromise.catch(error => {
+                        // Auto-play was prevented, show instruction
+                        showStatus('Click the play button to start playback. Some browsers require user interaction.', 'info');
+                    });
+                }
+                
+            } catch (error) {
+                // Handle errors
+                console.error('Error loading M3U playlist:', error);
+                
+                if (error.code === shaka.util.Error.Code.BAD_HTTP_STATUS) {
+                    showStatus('Failed to load playlist: Server error or invalid URL. The token might be expired.', 'error');
+                } else if (error.code === shaka.util.Error.Code.HTTP_ERROR) {
+                    showStatus('Network error: Please check your internet connection.', 'error');
+                } else {
+                    showStatus(`Playback error: ${error.message}`, 'error');
+                }
+            } finally {
+                // Reset button state
+                loadBtn.disabled = false;
+                loadBtn.innerHTML = '<i>🔄</i> Reload Stream';
+                loader.style.display = 'none';
+            }
+        }
+        
+        // Function to show status messages
+        function showStatus(message, type) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = `status ${type}`;
+            status.style.display = 'block';
+            
+            // Auto-hide success messages after 5 seconds
+            if (type === 'success') {
+                setTimeout(() => {
+                    status.style.display = 'none';
+                }, 5000);
+            }
+        }
+        
+        // Handle mobile browser back button to exit fullscreen
+        document.addEventListener('fullscreenchange', function() {
+            if (!document.fullscreenElement) {
+                const video = document.getElementById('video');
+                video.controls = false;
+                setTimeout(() => { video.controls = true; }, 100);
+            }
+        });
+    </script>
+</body>
+</html>
