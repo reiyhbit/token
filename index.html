@@ -299,8 +299,8 @@
             }
         }
     </style>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.3.4/shaka-player.ui.min.js"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.3.4/controls.min.css">
+    <!-- Simplified: Only load shaka player without UI -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.3.4/shaka-player.compiled.min.js"></script>
 </head>
 <body>
     <header>
@@ -365,15 +365,22 @@
             cignal: 'https://reiyhbit.github.io/iptv/playlist.m3u'
         };
         
-        // DRM Configuration
+        // DRM Configuration - Add robustness levels
         const DRM_CONFIG = {
             converge: {
                 servers: {
                     'com.widevine.alpha': 'https://key.nathcreqtives.com/widevine/?deviceId=02:00:00:00:00:00'
+                },
+                advanced: {
+                    'com.widevine.alpha': {
+                        videoRobustness: 'SW_SECURE_CRYPTO',
+                        audioRobustness: 'SW_SECURE_CRYPTO'
+                    }
                 }
             },
             cignal: {
-                clearKeys: {}
+                clearKeys: {},
+                advanced: {}
             }
         };
         
@@ -397,10 +404,11 @@
                 // Create Player instance
                 player = new shaka.Player(video);
                 
-                // Configure player
+                // Configure player with robustness levels
                 player.configure({
                     drm: {
                         servers: DRM_CONFIG.converge.servers,
+                        advanced: DRM_CONFIG.converge.advanced,
                         clearKeys: {}
                     },
                     streaming: {
@@ -425,6 +433,7 @@
                     updateStatus(`Now playing: ${getCurrentChannelName()}`);
                 });
                 
+                console.log('Player initialized successfully');
                 return true;
             } catch (error) {
                 console.error('Player initialization error:', error);
@@ -601,11 +610,17 @@
                 // Clear previous error
                 hideError();
                 
+                // Make sure player is initialized
+                if (!player) {
+                    await initPlayer();
+                }
+                
                 if (playlistType === 'converge') {
                     // Configure Widevine for Converge
                     player.configure({
                         drm: {
                             servers: DRM_CONFIG.converge.servers,
+                            advanced: DRM_CONFIG.converge.advanced,
                             clearKeys: {}
                         }
                     });
@@ -625,32 +640,8 @@
                         player.configure({
                             drm: {
                                 servers: {},
+                                advanced: {},
                                 clearKeys: clearKeyConfig.clearKeys
-                            }
-                        });
-                        
-                        // Register a license request filter to handle ClearKey
-                        player.getNetworkingEngine().registerRequestFilter(async (type, request) => {
-                            if (type === shaka.net.NetworkingEngine.RequestType.LICENSE) {
-                                console.log('Processing ClearKey license request');
-                                
-                                // For ClearKey, we need to provide a proper license response
-                                const license = {
-                                    keys: []
-                                };
-                                
-                                Object.entries(clearKeyConfig.clearKeys).forEach(([keyId, key]) => {
-                                    license.keys.push({
-                                        kty: 'oct',
-                                        kid: keyId,
-                                        k: key
-                                    });
-                                });
-                                
-                                // Set the response
-                                request.headers['Content-Type'] = 'application/json';
-                                request.body = shaka.util.StringUtils.toUTF8(JSON.stringify(license));
-                                request.allowCrossSiteCredentials = true;
                             }
                         });
                         
@@ -664,6 +655,7 @@
                         player.configure({
                             drm: {
                                 servers: {},
+                                advanced: {},
                                 clearKeys: {}
                             }
                         });
@@ -678,11 +670,7 @@
                 console.error('Error loading stream:', error);
                 
                 // Try alternative playback methods
-                if (playlistType === 'cignal') {
-                    tryAlternativePlayback(streamUrl, channelName);
-                } else {
-                    showError(`Failed to load stream: ${error.message}`);
-                }
+                tryAlternativePlayback(streamUrl, channelName);
             } finally {
                 showLoading(false);
             }
@@ -722,6 +710,7 @@
                     hls.on(Hls.Events.MANIFEST_PARSED, () => {
                         video.play().catch(e => {
                             console.log('Auto-play prevented:', e);
+                            updateStatus(`Loaded: ${channelName} - Tap to play`);
                         });
                         updateStatus(`Now playing: ${channelName} (HLS.js)`);
                     });
@@ -770,7 +759,6 @@
                 }).catch(e => {
                     console.log('Auto-play prevented:', e);
                     updateStatus(`Loaded: ${channelName} - Tap to play`);
-                    showError('Auto-play blocked. Please tap the video to start playback.');
                 });
                 
                 video.addEventListener('error', (e) => {
@@ -815,31 +803,27 @@
                 const logoColor = getLogoColor(channel.name);
                 
                 // Add DRM indicator
-                const drmIndicator = channel.keys.keyId ? '🔒' : '';
+                const drmIndicator = channel.keys.keyId ? ' 🔒' : '';
                 
                 channelElement.innerHTML = `
                     <div class="channel-logo" style="background: ${logoColor}">
                         ${logoLetter}
                     </div>
                     <div class="channel-info">
-                        <div class="channel-name">${channel.name} ${drmIndicator}</div>
+                        <div class="channel-name">${channel.name}${drmIndicator}</div>
                         <div class="channel-group">${channel.groupTitle}</div>
                     </div>
                 `;
                 
-                channelElement.addEventListener('click', async () => {
+                // Add click event listener
+                channelElement.addEventListener('click', function() {
                     // Remove active class from all channels
                     document.querySelectorAll('.channel-item').forEach(item => {
                         item.classList.remove('active');
                     });
                     
                     // Add active class to clicked channel
-                    channelElement.classList.add('active');
-                    
-                    // Reinitialize player if needed
-                    if (!player || player.isDestroyed()) {
-                        await initPlayer();
-                    }
+                    this.classList.add('active');
                     
                     // Load the selected channel
                     loadStream(channel.url, channel.name, playlistType, index);
@@ -855,7 +839,7 @@
                 currentChannelIndex = 0;
                 
                 // Auto-play first channel if this is the current playlist
-                if (currentPlaylist === playlistType) {
+                if (currentPlaylist === playlistType && player) {
                     const firstChannelData = channels[0];
                     loadStream(firstChannelData.url, firstChannelData.name, playlistType, 0);
                 }
@@ -987,12 +971,7 @@
         
         // Initialize when page loads
         document.addEventListener('DOMContentLoaded', async () => {
-            // Add HLS.js library for fallback
-            const hlsScript = document.createElement('script');
-            hlsScript.src = 'https://cdn.jsdelivr.net/npm/hls.js@latest';
-            document.head.appendChild(hlsScript);
-            
-            // Initialize player
+            // Initialize player first
             await initPlayer();
             
             // Set up playlist buttons
