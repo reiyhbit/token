@@ -262,6 +262,27 @@
             text-align: center;
         }
         
+        .playback-info {
+            text-align: center;
+            padding: 8px;
+            font-size: 12px;
+            background: #3a3a3a;
+            margin: 0 10px;
+            border-radius: 5px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .playback-badge {
+            background: #667eea;
+            padding: 3px 8px;
+            border-radius: 10px;
+            font-size: 10px;
+            font-weight: bold;
+        }
+        
         /* Mobile-specific styles */
         @media (max-width: 768px) {
             body {
@@ -320,6 +341,11 @@
         </div>
     </div>
     
+    <div class="playback-info" id="playback-info">
+        <span>Playback Method:</span>
+        <span class="playback-badge" id="playback-method">Not Playing</span>
+    </div>
+    
     <div class="status" id="status">Select a playlist to start streaming</div>
     
     <div class="controls">
@@ -358,6 +384,8 @@
         let currentChannelIndex = -1;
         let isLoadingPlaylist = false;
         let currentStreamUrl = '';
+        let hlsPlayer = null;
+        let currentPlaybackMethod = 'none';
         
         // Playlist URLs
         const PLAYLIST_URLS = {
@@ -396,7 +424,7 @@
             
             // Check if browser supports Shaka
             if (!shaka.Player.isBrowserSupported()) {
-                showError('Browser not supported! Please use Chrome, Firefox, or Edge.');
+                console.log('Shaka Player not supported, will use HLS.js or native');
                 return false;
             }
             
@@ -431,13 +459,13 @@
                 player.addEventListener('loaded', () => {
                     showLoading(false);
                     updateStatus(`Now playing: ${getCurrentChannelName()}`);
+                    updatePlaybackMethod('Widevine DRM');
                 });
                 
                 console.log('Player initialized successfully');
                 return true;
             } catch (error) {
                 console.error('Player initialization error:', error);
-                showError('Failed to initialize player: ' + error.message);
                 return false;
             }
         }
@@ -610,164 +638,321 @@
                 // Clear previous error
                 hideError();
                 
-                // Make sure player is initialized
-                if (!player) {
-                    await initPlayer();
-                }
-                
+                // Try different playback methods based on playlist type
                 if (playlistType === 'converge') {
-                    // Configure Widevine for Converge
-                    player.configure({
-                        drm: {
-                            servers: DRM_CONFIG.converge.servers,
-                            advanced: DRM_CONFIG.converge.advanced,
-                            clearKeys: {}
-                        }
-                    });
-                    
-                    await player.load(streamUrl);
-                    currentPlaylist = playlistType;
-                    updateStatus(`Now playing: ${channelName} (Widevine DRM)`);
-                    
+                    await tryConvergePlaybackMethods(streamUrl, channelName);
                 } else if (playlistType === 'cignal') {
-                    // Get ClearKey configuration for this stream
-                    const clearKeyConfig = getClearKeyConfig(streamUrl);
-                    
-                    if (clearKeyConfig && clearKeyConfig.clearKeys) {
-                        console.log('Using ClearKey for Cignal:', clearKeyConfig);
-                        
-                        // Configure ClearKey for Cignal
-                        player.configure({
-                            drm: {
-                                servers: {},
-                                advanced: {},
-                                clearKeys: clearKeyConfig.clearKeys
-                            }
-                        });
-                        
-                        await player.load(streamUrl);
-                        currentPlaylist = playlistType;
-                        updateStatus(`Now playing: ${channelName} (ClearKey DRM)`);
-                        
-                    } else {
-                        // No DRM, try to load without DRM
-                        console.log('No ClearKey found, trying without DRM');
-                        player.configure({
-                            drm: {
-                                servers: {},
-                                advanced: {},
-                                clearKeys: {}
-                            }
-                        });
-                        
-                        await player.load(streamUrl);
-                        currentPlaylist = playlistType;
-                        updateStatus(`Now playing: ${channelName}`);
-                    }
+                    await tryCignalPlaybackMethods(streamUrl, channelName);
                 }
                 
             } catch (error) {
                 console.error('Error loading stream:', error);
-                
-                // Try alternative playback methods
-                tryAlternativePlayback(streamUrl, channelName);
+                showError(`Failed to load stream: ${error.message}`);
+                // Try fallback
+                tryAlternativePlayback(streamUrl, channelName, true);
             } finally {
                 showLoading(false);
             }
         }
         
-        // Alternative playback method for HLS
-        function tryAlternativePlayback(streamUrl, channelName) {
-            const video = document.getElementById('video');
+        // Try Converge playback methods (Widevine → HLS.js → Native)
+        async function tryConvergePlaybackMethods(streamUrl, channelName) {
+            console.log('Trying Converge playback methods...');
             
-            // First, try to detach Shaka Player
-            if (player) {
-                try {
-                    player.detach();
-                    player = null;
-                } catch (e) {
-                    console.log('Error detaching player:', e);
-                }
+            // Method 1: Try Widevine DRM first
+            if (await tryWidevinePlayback(streamUrl, channelName)) {
+                return;
             }
             
-            // Clear video source
-            video.src = '';
-            video.removeAttribute('src');
-            video.load();
+            console.log('Widevine failed, trying HLS.js...');
             
-            // Check if HLS.js is available
-            if (typeof Hls !== 'undefined') {
-                if (Hls.isSupported()) {
-                    const hls = new Hls({
-                        enableWorker: true,
-                        lowLatencyMode: true,
-                        backBufferLength: 90
-                    });
+            // Method 2: Try HLS.js
+            if (tryHlsJsPlayback(streamUrl, channelName)) {
+                return;
+            }
+            
+            console.log('HLS.js failed, trying native HLS...');
+            
+            // Method 3: Try native HLS
+            tryNativeHLS(streamUrl, channelName);
+        }
+        
+        // Try Cignal playback methods (ClearKey → HLS.js → Native)
+        async function tryCignalPlaybackMethods(streamUrl, channelName) {
+            console.log('Trying Cignal playback methods...');
+            
+            // Method 1: Try ClearKey DRM first
+            if (await tryClearKeyPlayback(streamUrl, channelName)) {
+                return;
+            }
+            
+            console.log('ClearKey failed, trying HLS.js...');
+            
+            // Method 2: Try HLS.js
+            if (tryHlsJsPlayback(streamUrl, channelName)) {
+                return;
+            }
+            
+            console.log('HLS.js failed, trying native HLS...');
+            
+            // Method 3: Try native HLS
+            tryNativeHLS(streamUrl, channelName);
+        }
+        
+        // Try Widevine playback
+        async function tryWidevinePlayback(streamUrl, channelName) {
+            try {
+                if (!player) {
+                    const initialized = await initPlayer();
+                    if (!initialized) return false;
+                }
+                
+                // Configure Widevine
+                player.configure({
+                    drm: {
+                        servers: DRM_CONFIG.converge.servers,
+                        advanced: DRM_CONFIG.converge.advanced,
+                        clearKeys: {}
+                    }
+                });
+                
+                await player.load(streamUrl);
+                currentPlaylist = 'converge';
+                updateStatus(`Now playing: ${channelName} (Widevine DRM)`);
+                updatePlaybackMethod('Widevine DRM');
+                return true;
+                
+            } catch (error) {
+                console.log('Widevine playback failed:', error.message);
+                return false;
+            }
+        }
+        
+        // Try ClearKey playback
+        async function tryClearKeyPlayback(streamUrl, channelName) {
+            try {
+                if (!player) {
+                    const initialized = await initPlayer();
+                    if (!initialized) return false;
+                }
+                
+                // Get ClearKey configuration for this stream
+                const clearKeyConfig = getClearKeyConfig(streamUrl);
+                
+                if (clearKeyConfig && clearKeyConfig.clearKeys) {
+                    console.log('Using ClearKey for Cignal:', clearKeyConfig);
                     
-                    hls.loadSource(streamUrl);
-                    hls.attachMedia(video);
-                    
-                    hls.on(Hls.Events.MANIFEST_PARSED, () => {
-                        video.play().catch(e => {
-                            console.log('Auto-play prevented:', e);
-                            updateStatus(`Loaded: ${channelName} - Tap to play`);
-                        });
-                        updateStatus(`Now playing: ${channelName} (HLS.js)`);
-                    });
-                    
-                    hls.on(Hls.Events.ERROR, (event, data) => {
-                        console.error('HLS.js error:', data);
-                        if (data.fatal) {
-                            switch(data.type) {
-                                case Hls.ErrorTypes.NETWORK_ERROR:
-                                    showError('Network error. Trying native playback...');
-                                    hls.destroy();
-                                    tryNativeHLS(streamUrl, channelName);
-                                    break;
-                                case Hls.ErrorTypes.MEDIA_ERROR:
-                                    showError('Media error. Trying native playback...');
-                                    hls.destroy();
-                                    tryNativeHLS(streamUrl, channelName);
-                                    break;
-                                default:
-                                    hls.destroy();
-                                    showError('Playback error');
-                                    break;
-                            }
+                    // Configure ClearKey for Cignal
+                    player.configure({
+                        drm: {
+                            servers: {},
+                            advanced: {},
+                            clearKeys: clearKeyConfig.clearKeys
                         }
                     });
                     
-                    return;
+                    await player.load(streamUrl);
+                    currentPlaylist = 'cignal';
+                    updateStatus(`Now playing: ${channelName} (ClearKey DRM)`);
+                    updatePlaybackMethod('ClearKey DRM');
+                    return true;
+                } else {
+                    // No ClearKey, try without DRM
+                    player.configure({
+                        drm: {
+                            servers: {},
+                            advanced: {},
+                            clearKeys: {}
+                        }
+                    });
+                    
+                    await player.load(streamUrl);
+                    currentPlaylist = 'cignal';
+                    updateStatus(`Now playing: ${channelName}`);
+                    updatePlaybackMethod('Shaka (No DRM)');
+                    return true;
                 }
+                
+            } catch (error) {
+                console.log('ClearKey playback failed:', error.message);
+                return false;
             }
-            
-            // Try native HLS
-            tryNativeHLS(streamUrl, channelName);
+        }
+        
+        // Try HLS.js playback
+        function tryHlsJsPlayback(streamUrl, channelName) {
+            try {
+                // Check if HLS.js is available
+                if (typeof Hls === 'undefined') {
+                    console.log('HLS.js not loaded');
+                    return false;
+                }
+                
+                if (!Hls.isSupported()) {
+                    console.log('HLS.js not supported');
+                    return false;
+                }
+                
+                // Clean up previous player
+                cleanupCurrentPlayer();
+                
+                const video = document.getElementById('video');
+                hlsPlayer = new Hls({
+                    enableWorker: true,
+                    lowLatencyMode: true,
+                    backBufferLength: 90,
+                    maxBufferLength: 30,
+                    maxMaxBufferLength: 60,
+                    manifestLoadingTimeOut: 10000,
+                    manifestLoadingMaxRetry: 3,
+                    manifestLoadingRetryDelay: 500,
+                    levelLoadingTimeOut: 10000,
+                    levelLoadingMaxRetry: 3,
+                    levelLoadingRetryDelay: 500,
+                    fragLoadingTimeOut: 20000,
+                    fragLoadingMaxRetry: 6,
+                    fragLoadingRetryDelay: 500,
+                    startLevel: -1,
+                    capLevelToPlayerSize: true,
+                    autoStartLoad: true,
+                    debug: false
+                });
+                
+                hlsPlayer.loadSource(streamUrl);
+                hlsPlayer.attachMedia(video);
+                
+                hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => {
+                    video.play().catch(e => {
+                        console.log('Auto-play prevented:', e);
+                        updateStatus(`Loaded: ${channelName} - Tap to play`);
+                    });
+                    updateStatus(`Now playing: ${channelName} (HLS.js)`);
+                    updatePlaybackMethod('HLS.js');
+                });
+                
+                hlsPlayer.on(Hls.Events.ERROR, (event, data) => {
+                    console.error('HLS.js error:', data);
+                    if (data.fatal) {
+                        switch(data.type) {
+                            case Hls.ErrorTypes.NETWORK_ERROR:
+                                console.log('HLS.js network error, trying native...');
+                                hlsPlayer.destroy();
+                                hlsPlayer = null;
+                                return false;
+                            case Hls.ErrorTypes.MEDIA_ERROR:
+                                console.log('HLS.js media error, trying native...');
+                                hlsPlayer.destroy();
+                                hlsPlayer = null;
+                                return false;
+                            default:
+                                hlsPlayer.destroy();
+                                hlsPlayer = null;
+                                return false;
+                        }
+                    }
+                });
+                
+                return true;
+                
+            } catch (error) {
+                console.error('HLS.js playback failed:', error);
+                if (hlsPlayer) {
+                    hlsPlayer.destroy();
+                    hlsPlayer = null;
+                }
+                return false;
+            }
         }
         
         // Try native HLS playback
         function tryNativeHLS(streamUrl, channelName) {
+            try {
+                cleanupCurrentPlayer();
+                
+                const video = document.getElementById('video');
+                
+                if (video.canPlayType('application/vnd.apple.mpegurl') || 
+                    video.canPlayType('application/x-mpegURL')) {
+                    
+                    video.src = streamUrl;
+                    video.load();
+                    
+                    video.play().then(() => {
+                        updateStatus(`Now playing: ${channelName} (Native HLS)`);
+                        updatePlaybackMethod('Native HLS');
+                    }).catch(e => {
+                        console.log('Auto-play prevented:', e);
+                        updateStatus(`Loaded: ${channelName} - Tap to play`);
+                        updatePlaybackMethod('Native HLS');
+                    });
+                    
+                    video.addEventListener('error', (e) => {
+                        console.error('Native video error:', e);
+                        if (video.error) {
+                            console.error('Video error code:', video.error.code);
+                        }
+                        showError('Native playback failed');
+                    });
+                    
+                    return true;
+                } else {
+                    console.log('Native HLS not supported');
+                    showError('Your browser does not support HLS playback');
+                    return false;
+                }
+            } catch (error) {
+                console.error('Native HLS playback failed:', error);
+                showError('All playback methods failed');
+                return false;
+            }
+        }
+        
+        // Alternative playback method (legacy)
+        function tryAlternativePlayback(streamUrl, channelName, isFallback = false) {
+            console.log('Trying alternative playback...');
+            
+            if (tryHlsJsPlayback(streamUrl, channelName)) {
+                return;
+            }
+            
+            tryNativeHLS(streamUrl, channelName);
+        }
+        
+        // Clean up current player
+        function cleanupCurrentPlayer() {
             const video = document.getElementById('video');
             
-            if (video.canPlayType('application/vnd.apple.mpegurl') || 
-                video.canPlayType('application/x-mpegURL')) {
-                video.src = streamUrl;
-                video.load();
-                
-                video.play().then(() => {
-                    updateStatus(`Now playing: ${channelName} (Native HLS)`);
-                }).catch(e => {
-                    console.log('Auto-play prevented:', e);
-                    updateStatus(`Loaded: ${channelName} - Tap to play`);
-                });
-                
-                video.addEventListener('error', (e) => {
-                    console.error('Native video error:', e);
-                    showError('Native playback failed');
-                });
-            } else {
-                showError('Your browser does not support HLS playback');
+            // Stop Shaka Player
+            if (player) {
+                try {
+                    player.unload();
+                } catch (e) {
+                    console.log('Error unloading Shaka:', e);
+                }
             }
+            
+            // Stop HLS.js Player
+            if (hlsPlayer) {
+                try {
+                    hlsPlayer.destroy();
+                    hlsPlayer = null;
+                } catch (e) {
+                    console.log('Error destroying HLS.js:', e);
+                }
+            }
+            
+            // Clear native video
+            video.pause();
+            video.src = '';
+            video.removeAttribute('src');
+            video.load();
+        }
+        
+        // Update playback method display
+        function updatePlaybackMethod(method) {
+            currentPlaybackMethod = method;
+            document.getElementById('playback-method').textContent = method;
+            document.getElementById('playback-info').style.display = 'flex';
         }
         
         // Update channel list UI
@@ -837,12 +1022,6 @@
                 const firstChannel = channelList.children[0];
                 firstChannel.classList.add('active');
                 currentChannelIndex = 0;
-                
-                // Auto-play first channel if this is the current playlist
-                if (currentPlaylist === playlistType && player) {
-                    const firstChannelData = channels[0];
-                    loadStream(firstChannelData.url, firstChannelData.name, playlistType, 0);
-                }
             }
         }
         
@@ -905,23 +1084,16 @@
         function onPlayerError(event) {
             console.error('Player error:', event.detail);
             
-            // Check if it's a DRM error
-            if (event.detail.code === 6007 || event.detail.code === 6016) {
-                // DRM error, try fallback
-                if (currentPlaylist === 'cignal' && currentStreamUrl) {
-                    showError('DRM error. Trying alternative playback...');
-                    setTimeout(() => {
-                        const activeChannel = document.querySelector('.channel-item.active');
-                        if (activeChannel) {
-                            const channelName = getCurrentChannelName();
-                            tryAlternativePlayback(currentStreamUrl, channelName);
-                        }
-                    }, 1000);
-                } else {
-                    showError(`DRM Error: ${event.detail.message}`);
-                }
-            } else {
-                showError(`Playback error: ${event.detail.message}`);
+            // If Widevine fails, try HLS.js
+            if (currentPlaylist === 'converge') {
+                console.log('Widevine error, trying HLS.js fallback...');
+                setTimeout(() => {
+                    const activeChannel = document.querySelector('.channel-item.active');
+                    if (activeChannel && currentStreamUrl) {
+                        const channelName = getCurrentChannelName();
+                        tryHlsJsPlayback(currentStreamUrl, channelName);
+                    }
+                }, 1000);
             }
         }
         
@@ -969,9 +1141,31 @@
             }
         }
         
+        // Load HLS.js library dynamically
+        function loadHlsLibrary() {
+            return new Promise((resolve) => {
+                if (typeof Hls !== 'undefined') {
+                    resolve();
+                    return;
+                }
+                
+                const script = document.createElement('script');
+                script.src = 'https://cdn.jsdelivr.net/npm/hls.js@latest';
+                script.onload = resolve;
+                script.onerror = () => {
+                    console.log('Failed to load HLS.js library');
+                    resolve();
+                };
+                document.head.appendChild(script);
+            });
+        }
+        
         // Initialize when page loads
         document.addEventListener('DOMContentLoaded', async () => {
-            // Initialize player first
+            // Load HLS.js library first
+            await loadHlsLibrary();
+            
+            // Initialize player
             await initPlayer();
             
             // Set up playlist buttons
