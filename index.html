@@ -610,6 +610,7 @@
                 
                 // Set current channels
                 currentChannels = channels;
+                currentPlaylist = playlistType;
                 
                 // Update UI
                 updateChannelList(playlistType);
@@ -679,6 +680,7 @@
                 // Force autoplay
                 const video = document.getElementById('video');
                 video.autoplay = true;
+                currentPlaylist = playlistType;
                 
                 // Try different playback methods based on playlist type
                 if (playlistType === 'converge') {
@@ -741,7 +743,7 @@
             tryNativeHLS(streamUrl, channelName);
         }
         
-        // Try Widevine playback
+        // Try Widevine playback - FIXED: Reset player configuration
         async function tryWidevinePlayback(streamUrl, channelName) {
             try {
                 if (!player) {
@@ -749,14 +751,34 @@
                     if (!initialized) return false;
                 }
                 
-                // Configure Widevine
+                // IMPORTANT: Reset player configuration for Widevine
+                // This fixes the issue when switching from Cignal to Converge
+                cleanupCurrentPlayer();
+                
+                // Re-initialize player for Widevine
+                if (!player) {
+                    const video = document.getElementById('video');
+                    player = new shaka.Player(video);
+                }
+                
+                // Configure Widevine with fresh settings
                 player.configure({
                     drm: {
                         servers: DRM_CONFIG.converge.servers,
                         advanced: DRM_CONFIG.converge.advanced,
-                        clearKeys: {}
+                        clearKeys: {}  // Clear any ClearKey settings from Cignal
+                    },
+                    streaming: {
+                        bufferingGoal: 30,
+                        rebufferingGoal: 15,
+                        bufferBehind: 30,
+                        useNativeHlsOnSafari: false,
+                        lowLatencyMode: true
                     }
                 });
+                
+                // Re-attach error listeners
+                player.addEventListener('error', onPlayerError);
                 
                 await player.load(streamUrl);
                 currentPlaylist = 'converge';
@@ -770,7 +792,7 @@
             }
         }
         
-        // Try ClearKey playback
+        // Try ClearKey playback - FIXED: Properly handle DRM switching
         async function tryClearKeyPlayback(streamUrl, channelName) {
             try {
                 if (!player) {
@@ -784,14 +806,33 @@
                 if (clearKeyConfig && clearKeyConfig.clearKeys) {
                     console.log('Using ClearKey for Cignal:', clearKeyConfig);
                     
+                    // IMPORTANT: Clean up previous player
+                    cleanupCurrentPlayer();
+                    
+                    // Re-initialize player for ClearKey
+                    if (!player) {
+                        const video = document.getElementById('video');
+                        player = new shaka.Player(video);
+                    }
+                    
                     // Configure ClearKey for Cignal
                     player.configure({
                         drm: {
-                            servers: {},
-                            advanced: {},
+                            servers: {},  // Clear Widevine servers
+                            advanced: {}, // Clear Widevine advanced settings
                             clearKeys: clearKeyConfig.clearKeys
+                        },
+                        streaming: {
+                            bufferingGoal: 30,
+                            rebufferingGoal: 15,
+                            bufferBehind: 30,
+                            useNativeHlsOnSafari: false,
+                            lowLatencyMode: true
                         }
                     });
+                    
+                    // Re-attach error listeners
+                    player.addEventListener('error', onPlayerError);
                     
                     await player.load(streamUrl);
                     currentPlaylist = 'cignal';
@@ -800,6 +841,13 @@
                     return true;
                 } else {
                     // No ClearKey, try without DRM
+                    cleanupCurrentPlayer();
+                    
+                    if (!player) {
+                        const video = document.getElementById('video');
+                        player = new shaka.Player(video);
+                    }
+                    
                     player.configure({
                         drm: {
                             servers: {},
@@ -960,16 +1008,23 @@
             tryNativeHLS(streamUrl, channelName);
         }
         
-        // Clean up current player
+        // Clean up current player - FIXED: Better cleanup
         function cleanupCurrentPlayer() {
             const video = document.getElementById('video');
             
             // Stop Shaka Player
             if (player) {
                 try {
-                    player.unload();
+                    player.destroy();
+                    player = null;
                 } catch (e) {
-                    console.log('Error unloading Shaka:', e);
+                    console.log('Error destroying Shaka:', e);
+                    try {
+                        player.unload();
+                    } catch (e2) {
+                        console.log('Error unloading Shaka:', e2);
+                    }
+                    player = null;
                 }
             }
             
@@ -1002,6 +1057,7 @@
             const channelList = document.getElementById('channel-list');
             const channels = playlistType === 'converge' ? convergeChannels : cignalChannels;
             currentChannels = channels;
+            currentPlaylist = playlistType;
             
             channelList.innerHTML = '';
             
@@ -1239,6 +1295,25 @@
                 } else {
                     updateChannelList('converge');
                     updateStatus('Converge playlist loaded. Select a channel to play.');
+                    
+                    // Auto-play first channel for Converge too
+                    if (convergeChannels.length > 0) {
+                        setTimeout(() => {
+                            const firstChannel = convergeChannels[0];
+                            const channelList = document.getElementById('channel-list');
+                            const firstChannelElement = channelList.querySelector('.channel-item');
+                            
+                            if (firstChannelElement) {
+                                document.querySelectorAll('.channel-item').forEach(item => {
+                                    item.classList.remove('active');
+                                });
+                                firstChannelElement.classList.add('active');
+                                
+                                loadStream(firstChannel.url, firstChannel.name, 'converge', 0);
+                                updateStatus(`Now playing: ${firstChannel.name}`);
+                            }
+                        }, 500);
+                    }
                 }
             });
             
@@ -1256,7 +1331,9 @@
                     
                     // Auto-play first channel when switching to Cignal
                     if (AUTO_PLAY_FIRST_CHANNEL && cignalChannels.length > 0) {
-                        autoPlayFirstChannel();
+                        setTimeout(() => {
+                            autoPlayFirstChannel();
+                        }, 500);
                     } else {
                         updateStatus('Cignal playlist loaded. Select a channel to play.');
                     }
