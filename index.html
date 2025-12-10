@@ -320,9 +320,7 @@
             }
         }
     </style>
-    <!-- Simplified: Only load shaka player without UI -->
-    <!--<script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.3.4/shaka-player.compiled.min.js"></script>-->
-     <script src="https://cdn.jsdelivr.net/npm/shaka-player@4.16.9/dist/shaka-player.ui.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/shaka-player@4.16.9/dist/shaka-player.ui.min.js"></script>
 </head>
 <body>
     <header>
@@ -347,11 +345,11 @@
         <span class="playback-badge" id="playback-method">Not Playing</span>
     </div>
     
-    <div class="status" id="status">Select a playlist to start streaming</div>
+    <div class="status" id="status">Loading Cignal playlist...</div>
     
     <div class="controls">
         <button class="playlist-btn" id="converge-btn">Converge Playlist</button>
-        <button class="playlist-btn" id="cignal-btn">Cignal Playlist</button>
+        <button class="playlist-btn active" id="cignal-btn">Cignal Playlist</button>
         
         <div class="channel-nav">
             <button class="channel-nav-btn" id="prev-channel-btn">
@@ -366,16 +364,20 @@
     <div class="channel-list-container">
         <div class="channel-list-header">
             <span>Channels</span>
-            <span class="channel-count" id="channel-count">0 channels</span>
+            <span class="channel-count" id="channel-count">Loading...</span>
         </div>
         <div class="channel-list" id="channel-list">
             <div class="channel-item" style="text-align: center; opacity: 0.7; justify-content: center;">
-                Select a playlist to view channels
+                Loading Cignal playlist...
             </div>
         </div>
     </div>
 
     <script>
+        // Configuration - Cignal auto-load and auto-play
+        const AUTO_LOAD_PLAYLIST = 'cignal'; // 'cignal' or 'converge'
+        const AUTO_PLAY_FIRST_CHANNEL = true; // Auto-play first channel on load
+        
         // Initialize variables
         let player;
         let currentPlaylist = '';
@@ -613,11 +615,46 @@
                 updateChannelList(playlistType);
                 updateStatus(`${playlistType.toUpperCase()} playlist loaded with ${channels.length} channels`);
                 
+                // AUTO-PLAY FIRST CHANNEL FOR CIGNAL ON INITIAL LOAD
+                if (playlistType === 'cignal' && channels.length > 0 && AUTO_PLAY_FIRST_CHANNEL) {
+                    setTimeout(() => {
+                        autoPlayFirstChannel();
+                    }, 500);
+                }
+                
             } catch (error) {
                 console.error('Error loading playlist:', error);
                 updateStatus(`Error loading playlist: ${error.message}`);
             } finally {
                 isLoadingPlaylist = false;
+            }
+        }
+        
+        // NEW FUNCTION: Auto-play first channel
+        function autoPlayFirstChannel() {
+            if (currentChannels.length === 0) return;
+            
+            const firstChannel = currentChannels[0];
+            const channelList = document.getElementById('channel-list');
+            const firstChannelElement = channelList.querySelector('.channel-item');
+            
+            if (firstChannelElement) {
+                // Activate first channel in UI
+                document.querySelectorAll('.channel-item').forEach(item => {
+                    item.classList.remove('active');
+                });
+                firstChannelElement.classList.add('active');
+                
+                // Load and play first channel
+                loadStream(firstChannel.url, firstChannel.name, 'cignal', 0);
+                
+                // Scroll to first channel
+                firstChannelElement.scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'center'
+                });
+                
+                updateStatus(`Auto-playing: ${firstChannel.name}`);
             }
         }
         
@@ -638,6 +675,10 @@
                 
                 // Clear previous error
                 hideError();
+                
+                // Force autoplay
+                const video = document.getElementById('video');
+                video.autoplay = true;
                 
                 // Try different playback methods based on playlist type
                 if (playlistType === 'converge') {
@@ -977,9 +1018,17 @@
             // Update channel count
             document.getElementById('channel-count').textContent = `${channels.length} channels`;
             
+            // Add note for auto-play
+            if (playlistType === 'cignal' && AUTO_PLAY_FIRST_CHANNEL) {
+                updateStatus('Cignal playlist loaded. Auto-playing first channel...');
+            }
+            
             channels.forEach((channel, index) => {
                 const channelElement = document.createElement('div');
                 channelElement.className = 'channel-item';
+                if (playlistType === 'cignal' && index === 0 && AUTO_PLAY_FIRST_CHANNEL) {
+                    channelElement.classList.add('active');
+                }
                 channelElement.dataset.index = index;
                 channelElement.dataset.playlist = playlistType;
                 channelElement.title = `Group: ${channel.groupTitle}`;
@@ -1001,7 +1050,7 @@
                     </div>
                 `;
                 
-                // Add click event listener
+                // Add click event listener - AUTO-PLAY ON CLICK
                 channelElement.addEventListener('click', function() {
                     // Remove active class from all channels
                     document.querySelectorAll('.channel-item').forEach(item => {
@@ -1011,19 +1060,23 @@
                     // Add active class to clicked channel
                     this.classList.add('active');
                     
-                    // Load the selected channel
+                    // Get the channel data
+                    const index = parseInt(this.dataset.index);
+                    const playlistType = this.dataset.playlist;
+                    const channel = currentChannels[index];
+                    
+                    // Load and play immediately
                     loadStream(channel.url, channel.name, playlistType, index);
+                    
+                    // Scroll into view
+                    this.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'center'
+                    });
                 });
                 
                 channelList.appendChild(channelElement);
             });
-            
-            // Auto-select first channel if none selected
-            if (channelList.children.length > 0 && !document.querySelector('.channel-item.active')) {
-                const firstChannel = channelList.children[0];
-                firstChannel.classList.add('active');
-                currentChannelIndex = 0;
-            }
         }
         
         // Generate consistent color from channel name
@@ -1163,6 +1216,10 @@
         
         // Initialize when page loads
         document.addEventListener('DOMContentLoaded', async () => {
+            // Set initial UI state for Cignal
+            updateStatus('Initializing player...');
+            document.getElementById('cignal-btn').classList.add('active');
+            
             // Load HLS.js library first
             await loadHlsLibrary();
             
@@ -1196,7 +1253,13 @@
                     await loadPlaylist('cignal');
                 } else {
                     updateChannelList('cignal');
-                    updateStatus('Cignal playlist loaded. Select a channel to play.');
+                    
+                    // Auto-play first channel when switching to Cignal
+                    if (AUTO_PLAY_FIRST_CHANNEL && cignalChannels.length > 0) {
+                        autoPlayFirstChannel();
+                    } else {
+                        updateStatus('Cignal playlist loaded. Select a channel to play.');
+                    }
                 }
             });
             
@@ -1231,10 +1294,8 @@
                 }
             });
             
-            // Initialize with Converge playlist
-            setTimeout(() => {
-                document.getElementById('converge-btn').click();
-            }, 1000);
+            // Initialize with Cignal playlist automatically
+            await loadPlaylist(AUTO_LOAD_PLAYLIST);
             
             // Handle fullscreen changes
             document.addEventListener('fullscreenchange', () => {
