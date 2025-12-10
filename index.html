@@ -320,7 +320,7 @@
             }
         }
     </style>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.3.4/shaka-player.compiled.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/shaka-player@4.16.9/dist/shaka-player.ui.min.js"></script>
 </head>
 <body>
     <header>
@@ -418,7 +418,7 @@
         // Cache for channel-specific ClearKey data
         const clearKeyCache = new Map();
         
-        // Initialize Shaka Player
+        // Initialize Shaka Player - UPDATED for v4.16
         async function initPlayer() {
             const video = document.getElementById('video');
             
@@ -432,10 +432,13 @@
             }
             
             try {
-                // Create Player instance
-                player = new shaka.Player(video);
+                // Create Player instance - NEW METHOD for v4.16
+                player = new shaka.Player();
                 
-                // Configure player with robustness levels
+                // Attach to video element
+                await player.attach(video);
+                
+                // Configure player with updated settings for v4.16
                 player.configure({
                     drm: {
                         servers: DRM_CONFIG.converge.servers,
@@ -446,7 +449,9 @@
                         bufferingGoal: 30,
                         rebufferingGoal: 15,
                         bufferBehind: 30,
-                        useNativeHlsOnSafari: false,
+                        // UPDATED: Use new configuration instead of deprecated useNativeHlsOnSafari
+                        preferNativeHls: true,
+                        useNativeHlsForFairPlay: true,
                         lowLatencyMode: true
                     }
                 });
@@ -743,23 +748,29 @@
             tryNativeHLS(streamUrl, channelName);
         }
         
-        // Try Widevine playback - FIXED: Reset player configuration
+        // Try Widevine playback - UPDATED for v4.16
         async function tryWidevinePlayback(streamUrl, channelName) {
             try {
-                if (!player) {
-                    const initialized = await initPlayer();
-                    if (!initialized) return false;
-                }
-                
                 // IMPORTANT: Reset player configuration for Widevine
                 // This fixes the issue when switching from Cignal to Converge
                 cleanupCurrentPlayer();
                 
-                // Re-initialize player for Widevine
-                if (!player) {
-                    const video = document.getElementById('video');
-                    player = new shaka.Player(video);
+                // Initialize Shaka Player for Widevine
+                const video = document.getElementById('video');
+                
+                // Install built-in polyfills
+                shaka.polyfill.installAll();
+                
+                if (!shaka.Player.isBrowserSupported()) {
+                    console.log('Shaka Player not supported for Widevine');
+                    return false;
                 }
+                
+                // Create new player instance - NEW METHOD for v4.16
+                player = new shaka.Player();
+                
+                // Attach to video element
+                await player.attach(video);
                 
                 // Configure Widevine with fresh settings
                 player.configure({
@@ -772,18 +783,25 @@
                         bufferingGoal: 30,
                         rebufferingGoal: 15,
                         bufferBehind: 30,
-                        useNativeHlsOnSafari: false,
+                        preferNativeHls: true,
+                        useNativeHlsForFairPlay: true,
                         lowLatencyMode: true
                     }
                 });
                 
                 // Re-attach error listeners
                 player.addEventListener('error', onPlayerError);
+                player.addEventListener('loading', () => {
+                    showLoading(true, 'Loading stream...');
+                });
+                player.addEventListener('loaded', () => {
+                    showLoading(false);
+                    updateStatus(`Now playing: ${channelName} (Widevine DRM)`);
+                    updatePlaybackMethod('Widevine DRM');
+                });
                 
                 await player.load(streamUrl);
                 currentPlaylist = 'converge';
-                updateStatus(`Now playing: ${channelName} (Widevine DRM)`);
-                updatePlaybackMethod('Widevine DRM');
                 return true;
                 
             } catch (error) {
@@ -792,14 +810,9 @@
             }
         }
         
-        // Try ClearKey playback - FIXED: Properly handle DRM switching
+        // Try ClearKey playback - UPDATED for v4.16
         async function tryClearKeyPlayback(streamUrl, channelName) {
             try {
-                if (!player) {
-                    const initialized = await initPlayer();
-                    if (!initialized) return false;
-                }
-                
                 // Get ClearKey configuration for this stream
                 const clearKeyConfig = getClearKeyConfig(streamUrl);
                 
@@ -809,11 +822,22 @@
                     // IMPORTANT: Clean up previous player
                     cleanupCurrentPlayer();
                     
-                    // Re-initialize player for ClearKey
-                    if (!player) {
-                        const video = document.getElementById('video');
-                        player = new shaka.Player(video);
+                    // Initialize Shaka Player for ClearKey
+                    const video = document.getElementById('video');
+                    
+                    // Install built-in polyfills
+                    shaka.polyfill.installAll();
+                    
+                    if (!shaka.Player.isBrowserSupported()) {
+                        console.log('Shaka Player not supported for ClearKey');
+                        return false;
                     }
+                    
+                    // Create new player instance - NEW METHOD for v4.16
+                    player = new shaka.Player();
+                    
+                    // Attach to video element
+                    await player.attach(video);
                     
                     // Configure ClearKey for Cignal
                     player.configure({
@@ -826,40 +850,71 @@
                             bufferingGoal: 30,
                             rebufferingGoal: 15,
                             bufferBehind: 30,
-                            useNativeHlsOnSafari: false,
+                            preferNativeHls: true,
+                            useNativeHlsForFairPlay: true,
                             lowLatencyMode: true
                         }
                     });
                     
                     // Re-attach error listeners
                     player.addEventListener('error', onPlayerError);
+                    player.addEventListener('loading', () => {
+                        showLoading(true, 'Loading stream...');
+                    });
+                    player.addEventListener('loaded', () => {
+                        showLoading(false);
+                        updateStatus(`Now playing: ${channelName} (ClearKey DRM)`);
+                        updatePlaybackMethod('ClearKey DRM');
+                    });
                     
                     await player.load(streamUrl);
                     currentPlaylist = 'cignal';
-                    updateStatus(`Now playing: ${channelName} (ClearKey DRM)`);
-                    updatePlaybackMethod('ClearKey DRM');
                     return true;
                 } else {
                     // No ClearKey, try without DRM
                     cleanupCurrentPlayer();
                     
-                    if (!player) {
-                        const video = document.getElementById('video');
-                        player = new shaka.Player(video);
+                    const video = document.getElementById('video');
+                    
+                    // Install built-in polyfills
+                    shaka.polyfill.installAll();
+                    
+                    if (!shaka.Player.isBrowserSupported()) {
+                        console.log('Shaka Player not supported');
+                        return false;
                     }
+                    
+                    player = new shaka.Player();
+                    await player.attach(video);
                     
                     player.configure({
                         drm: {
                             servers: {},
                             advanced: {},
                             clearKeys: {}
+                        },
+                        streaming: {
+                            bufferingGoal: 30,
+                            rebufferingGoal: 15,
+                            bufferBehind: 30,
+                            preferNativeHls: true,
+                            useNativeHlsForFairPlay: true,
+                            lowLatencyMode: true
                         }
+                    });
+                    
+                    player.addEventListener('error', onPlayerError);
+                    player.addEventListener('loading', () => {
+                        showLoading(true, 'Loading stream...');
+                    });
+                    player.addEventListener('loaded', () => {
+                        showLoading(false);
+                        updateStatus(`Now playing: ${channelName}`);
+                        updatePlaybackMethod('Shaka (No DRM)');
                     });
                     
                     await player.load(streamUrl);
                     currentPlaylist = 'cignal';
-                    updateStatus(`Now playing: ${channelName}`);
-                    updatePlaybackMethod('Shaka (No DRM)');
                     return true;
                 }
                 
@@ -1008,11 +1063,11 @@
             tryNativeHLS(streamUrl, channelName);
         }
         
-        // Clean up current player - FIXED: Better cleanup
+        // Clean up current player - UPDATED for v4.16
         function cleanupCurrentPlayer() {
             const video = document.getElementById('video');
             
-            // Stop Shaka Player
+            // Stop Shaka Player - NEW METHOD for v4.16
             if (player) {
                 try {
                     player.destroy();
@@ -1020,9 +1075,13 @@
                 } catch (e) {
                     console.log('Error destroying Shaka:', e);
                     try {
-                        player.unload();
+                        // Try to detach first
+                        if (player.attach && typeof player.detach === 'function') {
+                            player.detach();
+                        }
+                        player.destroy();
                     } catch (e2) {
-                        console.log('Error unloading Shaka:', e2);
+                        console.log('Error detaching Shaka:', e2);
                     }
                     player = null;
                 }
